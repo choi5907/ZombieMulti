@@ -1,3 +1,4 @@
+using Photon.Pun;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -43,18 +44,17 @@ public class PlayerHealth : LivingEntity
         playerShooter.enabled = true;
     }
 
-    // 체력 회복
-    public override void RestoreHealth(float newHealth)
-    {
+    // 체력회복
+    [PunRPC]
+    public override void RestoreHealth(float newHealth){
         // LivingEntity의 RestoreHealthg() 실행(체력 증가)
         base.RestoreHealth(newHealth);
         // 갱신된 체력으로 체력 슬라이더 갱신
         healthSlider.value = health;
     }
 
-    // 대미지 처리
-    public override void OnDamage(float damage, Vector3 hitPoint, Vector3 hitNormal)
-    {
+    [PunRPC]
+    public override void OnDamage(float damage, Vector3 hitPoint, Vector3 hitNormal){
         if (!dead)
         {
             // 사망하지 않은 경우에만 효과음 재생
@@ -66,6 +66,30 @@ public class PlayerHealth : LivingEntity
         // 갱신된 체력을 체력 슬라이더에 반영
         healthSlider.value = health;
     }
+
+    // // 체력 회복
+    // public override void RestoreHealth(float newHealth)
+    // {
+    //     // LivingEntity의 RestoreHealthg() 실행(체력 증가)
+    //     base.RestoreHealth(newHealth);
+    //     // 갱신된 체력으로 체력 슬라이더 갱신
+    //     healthSlider.value = health;
+    // }
+
+    // // 대미지 처리
+    // public override void OnDamage(float damage, Vector3 hitPoint, Vector3 hitNormal)
+    // {
+    //     if (!dead)
+    //     {
+    //         // 사망하지 않은 경우에만 효과음 재생
+    //         playerAudioPlayer.PlayOneShot(hitClip);
+    //     }
+
+    //     // LivingEntity의 OnDamage() 실행(대미지 적용)
+    //     base.OnDamage(damage, hitPoint, hitNormal);
+    //     // 갱신된 체력을 체력 슬라이더에 반영
+    //     healthSlider.value = health;
+    // }
 
     // 사망 처리
     public override void Die()
@@ -84,6 +108,9 @@ public class PlayerHealth : LivingEntity
         // 플레이어 조작을 받는 컴포넌트 비활성화
         playerMovement.enabled = false;
         playerShooter.enabled = false;
+        
+        // 5초 뒤에 리스폰
+        Invoke("Respawn", 5f);
     }
 
     private void OnTriggerEnter(Collider other)
@@ -98,11 +125,35 @@ public class PlayerHealth : LivingEntity
             // 충돌한 상대방으로 부터 IItem 컴포넌트를 가져오는 데 성공했다면
             if (item != null)
             {
-                // Use 메서드를 실행하여 아이템 사용
-                item.Use(gameObject);
+                // 호스트만 아이템 직접 사용 가능
+                // 호스트에서는 아이템 사용 후 사용된 아이템의 효과를 모든 클라이언트에 동기화시킴
+                if(PhotonNetwork.IsMasterClient){
+                    // Use 메서드를 실행하여 아이템 사용
+                    item.Use(gameObject);
+                }
+
                 // 아이템 습득 소리 재생
                 playerAudioPlayer.PlayOneShot(itemPickupClip);
             }
         }
+    }
+
+    // 부활 처리
+    public void Respawn(){
+        // 로컬 플레이어만 직접 위치 변경 가능
+        if(photonView.IsMine){
+            // 원점에서 반경 5유닛 내부의 랜덤 위치 지정
+            Vector3 randomSpawnPos = Random.insideUnitSphere * 5f;
+            // 랜덤 위치의 y 값을 0으로 변경
+            randomSpawnPos.y = 0f;
+
+            // 지정된 랜덤 위치로 이동
+            transform.position = randomSpawnPos;
+        }
+
+        // 컴포넌트를 리세하기 위해 게임 오브젝트를 잠시 껐다가 다시 켜기
+        // 컴포넌트의 OnDisable(), OnEnable() 메서드가 실행됨
+        gameObject.SetActive(false);
+        gameObject.SetActive(true);
     }
 }

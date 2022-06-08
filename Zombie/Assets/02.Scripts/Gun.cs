@@ -1,8 +1,9 @@
 using System.Collections;
+using Photon.Pun;
 using UnityEngine;
 
 // 총을 구현
-public class Gun : MonoBehaviour
+public class Gun : MonoBehaviourPun, IPunObservable
 {
     // 총의 상태를 표현하는데 사용할 타입을 선언
     public enum State
@@ -31,6 +32,33 @@ public class Gun : MonoBehaviour
     public int magAmmo; // 현재 탄창에 남아 있는 탄알
 
     private float lastFireTime; // 총을 마지막으로 발사한 시점
+
+    // 주기적으로 자동 실행되는 동기화 메서드
+    public void OnPhotonSerializeView(PhotonStream stream, PhotonMessageInfo info){
+        // 로컬 오브젝트라면 쓰기 부분이 실행됨
+        if(stream.IsWriting){
+            // 남은 탄알 수를 네트워크를 통해 보내기
+            stream.SendNext(ammoRemain);
+            // 탄창의 탄알 수를 네트워크를 통해 보내기
+            stream.SendNext(magAmmo);
+            // 현재 총의 상태를 네트워크를 통해 보내기
+            stream.SendNext(state);
+        }
+        else{
+            // 리모트 오브젝트라면 읽기 부분이 실행됨
+            // 남은 탄알 수를 네트워크를 통해 받기
+            ammoRemain = (int) stream.ReceiveNext();
+            // 탄창의 탄알 수를 네트워크를 통해 받기
+            magAmmo = (int) stream.ReceiveNext();
+            // 현재 총의 상태를 네트워크를 통해 받기
+            state = (State) stream.ReceiveNext();
+        }
+    }
+    // 남은 탄알을 추가하는 메서드
+    [PunRPC]
+    public void AddAmmo(int ammo){
+        ammoRemain += ammo;
+    }
 
     private void Awake()
     {
@@ -75,40 +103,43 @@ public class Gun : MonoBehaviour
 
     private void Shot() // 실제 발사 처리
     {
-        // 레이캐스트에 의한 충돌 정보를 저장하는 컨테이너
-        RaycastHit hit;
-        // 탄알이 맞은 곳을 저장할 변수
-        Vector3 hitPosition = Vector3.zero;
+        // 실제 발사 처리는 호스트에 대리
+        photonView.RPC("ShotProcessOnServer", RpcTarget.MasterClient);
 
-        // 레이캐스트(시작 지점, 방향, 충돌 정보 컨테이너, 사정거리)
-        if(Physics.Raycast(fireTransform.position, 
-            fireTransform.forward, out hit, fireDistance))
-        {
-            // 레이가 어떤 물체와 충돌한 경우
+        // // 레이캐스트에 의한 충돌 정보를 저장하는 컨테이너
+        // RaycastHit hit;
+        // // 탄알이 맞은 곳을 저장할 변수
+        // Vector3 hitPosition = Vector3.zero;
 
-            // 충돌한 상대방으로부터 IDamageable 오브젝트 가져오기 시도
-            IDamageable target = hit.collider.GetComponent<IDamageable>();
+        // // 레이캐스트(시작 지점, 방향, 충돌 정보 컨테이너, 사정거리)
+        // if(Physics.Raycast(fireTransform.position, 
+        //     fireTransform.forward, out hit, fireDistance))
+        // {
+        //     // 레이가 어떤 물체와 충돌한 경우
 
-            // 상대방으로부터 IDamageable 오브젝트를 가져오는 데 성공했다면
-            if(target != null)
-            {
-                // 상대방의 OnDamage 함수를 실행시켜 상대방에 대미지 주기
-                target.OnDamage(gunData.damage, hit.point, hit.normal);
-            }
+        //     // 충돌한 상대방으로부터 IDamageable 오브젝트 가져오기 시도
+        //     IDamageable target = hit.collider.GetComponent<IDamageable>();
 
-            // 레이가 충돌한 위치 저장
-            hitPosition = hit.point;
-        }
-        else
-        {
-            // 레이가 다른 물체와 충돌하지 않았다면
-            // 탄알이 최대 사정거리까지 날아갔을 때의 위치를 충돌위치로 사용
-            hitPosition = fireTransform.position + 
-                fireTransform.forward * fireDistance;
-        }
+        //     // 상대방으로부터 IDamageable 오브젝트를 가져오는 데 성공했다면
+        //     if(target != null)
+        //     {
+        //         // 상대방의 OnDamage 함수를 실행시켜 상대방에 대미지 주기
+        //         target.OnDamage(gunData.damage, hit.point, hit.normal);
+        //     }
 
-        // 발사 이팩트 재생 시작
-        StartCoroutine(shotEffect(hitPosition));
+        //     // 레이가 충돌한 위치 저장
+        //     hitPosition = hit.point;
+        // }
+        // else
+        // {
+        //     // 레이가 다른 물체와 충돌하지 않았다면
+        //     // 탄알이 최대 사정거리까지 날아갔을 때의 위치를 충돌위치로 사용
+        //     hitPosition = fireTransform.position + 
+        //         fireTransform.forward * fireDistance;
+        // }
+
+        // // 발사 이팩트 재생 시작
+        // StartCoroutine(shotEffect(hitPosition));
 
         // 남은 탄알 수를 -1
         magAmmo--;
@@ -119,7 +150,47 @@ public class Gun : MonoBehaviour
         }
     }
 
-    private IEnumerator shotEffect(Vector3 hitPosition)
+    // 호스트에서 실행되는 실제 발사 처리
+    [PunRPC]
+    private void ShotProcessOnServer(){
+        // 레이캐스트에 의한 충돌 정보를 저장하는 컨테이너
+        RaycastHit hit;
+        // 탄알이 맞은 곳을 저장할 변수
+        Vector3 hitPosition = Vector3.zero;
+
+        // 레이캐스트(시작 지점, 방향, 충돌 정보 컨테이너, 사정거리)
+        if(Physics.Raycast(fireTransform.position, fireTransform.forward, out hit, fireDistance)){
+            // 레이가 어떤 물체와 충돌한 경우
+
+            // 충돌한 상대방으로부터 IDamageable 오브젝트 가져오기 시도
+            IDamageable target = hit.collider.GetComponent<IDamageable>();
+
+            // 상대방으로부터 IDamageable 오브젝트를 가져오는 데 성공했다면
+            if(target != null){
+                // 상대방의 OnDamage 함수를 실행시켜 상대방에게 대미지 주기
+                target.OnDamage(gunData.damage, hit.point, hit.normal);
+            }
+
+            // 레이가 충돌한 위치 저장
+            hitPosition = hit.point;
+        }
+        else{
+            // 레이가 다른 물체와 충돌하지 않았다면
+            // 탄알이 최대 사정거리까지 날아갔을 때의 위치를 충돌위치로 사용
+            hitPosition = fireTransform.position + fireTransform.forward * fireDistance;
+        }
+
+        // 발사 이팩트 재생, 이펙트 재생은 모든 클라이언트에서 실행
+        photonView.RPC("ShotEffectProcessOnClients", RpcTarget.All, hitPosition);
+    }
+
+    // 이펙트 재생 코루틴을 랩핑하는 메서드
+    [PunRPC]
+    private void ShotEffectProcessOnClients(Vector3 hitPosition){
+        StartCoroutine(ShotEffect(hitPosition));
+    }
+
+    private IEnumerator ShotEffect(Vector3 hitPosition)
     {
         // 총구 화염 효과 재생
         muzzleFlashEffect.Play();
